@@ -99,7 +99,7 @@ Queries run one after another. A failed query yields `{"error": ..., "query": ..
 
 ## Backends
 
-Microsoft retired the Bing Search APIs on August 11, 2025, so the Bing column describes code that can no longer get results. Use Google or DuckDuckGo.
+Microsoft retired the Bing Search APIs on August 11, 2025, so the Bing column describes code that can no longer get results. Google's Custom Search JSON API is closed to new customers and will be discontinued on January 1, 2027 ([source](https://developers.google.com/custom-search/v1/overview)). After that date, DuckDuckGo scraping is the only backend expected to keep working.
 
 | | Google | Bing | DuckDuckGo |
 |---|---|---|---|
@@ -199,7 +199,7 @@ On any exception it returns `"Search error: <message>"` instead of raising.
 | `total_results` | Google `searchInformation.totalResults`, Bing `webPages.totalEstimatedMatches`, or the number of parsed results for DuckDuckGo |
 | `search_time_ms` | Time spent in the backend request and parsing |
 | `backend` | `'google'`, `'bing'` or `'duckduckgo'` |
-| `filters_applied` | The request parameters sent to the backend. For Google this includes `key` (the API key) and `cx`. |
+| `filters_applied` | The request parameters sent to the backend, without the API key. For Google this includes `cx`, the search engine ID. |
 
 ### Result fields (`SearchResult`)
 
@@ -224,7 +224,8 @@ On any exception it returns `"Search error: <message>"` instead of raising.
 ## Safety and limits
 
 - Logging: importing the package calls `logging.basicConfig(level=logging.INFO)`. Each search logs the original and rewritten query at INFO level, and backend errors at ERROR level. With `backend='auto'` and no Google credentials, every search that is not served from the cache also logs an ERROR line before falling back, and every DuckDuckGo search logs a WARNING.
-- Google API key exposure: the key is a URL query parameter. It appears in `filters_applied` of Google responses (and is cached with them). When a Google request fails, the error text includes the request URL; that text is logged, put in the raised `RuntimeError`, and returned as the LangChain tool's output.
+- API keys: the Google key is sent as the `key` URL query parameter and the Bing key in the `Ocp-Apim-Subscription-Key` header. Neither is in `filters_applied`, so neither is returned or cached. If a request fails, the backend replaces the key with `***` in the error message (including its URL-encoded form), logs that message and raises `requests.exceptions.RequestException` with `from None`, so the original exception is not chained into tracebacks. The key therefore stays out of this package's log lines, the `RuntimeError` from `search()`, `search_batch()` error entries and the LangChain tool's output. urllib3, which `requests` uses, logs each request URL at DEBUG level, including the Google `key` parameter, so keep urllib3 DEBUG logging off in production.
+- Backend availability: Google's Custom Search JSON API is closed to new customers and will be discontinued on January 1, 2027 ([source](https://developers.google.com/custom-search/v1/overview)), and the Bing Search APIs were retired on August 11, 2025. After January 1, 2027, DuckDuckGo scraping is the only backend expected to keep working. Failed requests are not retried on another backend, so set `backend='duckduckgo'` before then.
 - Rate limiting: the per-minute and per-day counters reset fully once 60 seconds or 24 hours have passed since their last reset. They live in memory per `WebSearchTool` instance and are not shared across instances or processes. Cache hits also use a slot.
 - Caching: the cache is an unbounded dict per instance. Expired entries are removed only when they are looked up.
 - Fallback covers missing credentials only. Failed requests are not retried.
@@ -254,7 +255,7 @@ python -m pytest websearch_tool/tests/test_websearch_tool.py -v
 
 Use `python -m pytest` rather than `pytest`. The test file adds `websearch_tool/` (not the repository root) to `sys.path`, so the import relies on `python -m` putting the current directory on the path.
 
-The tests cover `SearchResult`, `SearchResponse`, `SearchConfig` validation, `QueryRewriter`, `ResultCache` expiry, `RateLimiter`, `WebSearchTool` setup, deduplication, stats and caching, and `create_langchain_tool()`. Three depend on the environment:
+The tests cover `SearchResult`, `SearchResponse`, `SearchConfig` validation, `QueryRewriter`, `ResultCache` expiry, `RateLimiter`, `WebSearchTool` setup, deduplication, stats and caching, `create_langchain_tool()`, and API-key handling. The API-key tests in `TestApiKeyRedaction` mock `requests.get`, so they need no keys or network access. Three tests depend on the environment:
 
 - `test_search_caching` mocks only `GoogleSearchBackend.search`. Unless `GOOGLE_API_KEY` and `GOOGLE_ENGINE_ID` are set (any value), the tool falls back to Bing or DuckDuckGo and the test's assertion fails.
 - `test_tool_func_error_handling` and `test_full_workflow_no_api` send real HTTP requests and expect them to fail.
