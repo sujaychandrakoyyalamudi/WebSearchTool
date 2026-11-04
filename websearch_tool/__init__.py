@@ -27,6 +27,7 @@ import logging
 from typing import Optional, List, Dict, Any, Literal
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 import requests
 from pydantic import BaseModel, Field
 
@@ -271,6 +272,21 @@ class RateLimiter:
         return False
 
 
+def _redact_secret(text: str, secret: Optional[str]) -> str:
+    """
+    Replace an API key in text with '***'.
+
+    requests error messages can show the key URL-encoded (in a request URL)
+    or repr()-quoted (for an invalid header value), so those forms are
+    replaced too.
+    """
+    if not secret:
+        return text
+    for form in (secret, quote_plus(secret), repr(secret)[1:-1]):
+        text = text.replace(form, '***')
+    return text
+
+
 class WebSearchBackend:
     """Base class for search backends."""
     
@@ -298,11 +314,11 @@ class GoogleSearchBackend(WebSearchBackend):
     def search(self, query: str, config: SearchConfig) -> SearchResponse:
         start_time = time.time()
         
-        # Build request parameters
+        # Build request parameters. The API key is added only when sending the
+        # request, so it stays out of filters_applied.
         params = {
             'q': query,
             'cx': self.engine_id,
-            'key': self.api_key,
             'num': min(config.num_results, 10),  # Google max 10 per request
             'gl': config.country,
             'hl': config.language,
@@ -338,7 +354,7 @@ class GoogleSearchBackend(WebSearchBackend):
         try:
             response = requests.get(
                 self.base_url,
-                params=params,
+                params={**params, 'key': self.api_key},
                 timeout=config.timeout_seconds
             )
             response.raise_for_status()
@@ -377,8 +393,10 @@ class GoogleSearchBackend(WebSearchBackend):
             )
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Google search error: {e}")
-            raise
+            # The error text can include the request URL, which carries the key
+            message = _redact_secret(str(e), self.api_key)
+            logger.error(f"Google search error: {message}")
+            raise requests.exceptions.RequestException(message) from None
 
 
 class BingSearchBackend(WebSearchBackend):
@@ -465,8 +483,10 @@ class BingSearchBackend(WebSearchBackend):
             )
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Bing search error: {e}")
-            raise
+            # requests quotes an invalid header value, such as a key ending in a newline, in its error
+            message = _redact_secret(str(e), self.api_key)
+            logger.error(f"Bing search error: {message}")
+            raise requests.exceptions.RequestException(message) from None
 
 
 class DuckDuckGoBackend(WebSearchBackend):

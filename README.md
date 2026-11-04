@@ -17,7 +17,7 @@ Each result has `title`, `url`, `snippet` and `source` (the backend name). `crea
 
 ## Features
 
-- Backends: Google Custom Search JSON API, Bing Web Search API v7, and DuckDuckGo's HTML results page, parsed with regular expressions. `backend='auto'` (the default) uses Google. Microsoft retired the Bing Search APIs on August 11, 2025, so the Bing backend no longer works (see [Safety and limits](#safety-and-limits)).
+- Backends: Google Custom Search JSON API, Bing Web Search API v7, and DuckDuckGo's HTML results page, parsed with regular expressions. `backend='auto'` (the default) uses Google. Microsoft retired the Bing Search APIs on August 11, 2025, so the Bing backend no longer works. Google's Custom Search JSON API is closed to new customers and will be discontinued on January 1, 2027. After that date, DuckDuckGo scraping is the only backend expected to keep working (see [Safety and limits](#safety-and-limits)).
 - Fallback for missing credentials: if the selected backend is missing its credentials, the tool uses the first other backend that has them, in the order Google, Bing, DuckDuckGo (which needs no key). A request that fails is not retried on another backend.
 - Filters: `safe_search`, `date_range_days`, `allowed_domains` and `blocked_domains` (Google and Bing only), and `content_type` (only `'image'` on Google changes the request; other values only label the results).
 - Query rewriting: collapses whitespace, quotes title-case queries of up to three words, and, when you pass `context` and the query contains `it`, `they`, `this`, `that` or `these`, appends up to three words from the context.
@@ -88,12 +88,13 @@ The code reads three environment variables: `GOOGLE_API_KEY`, `GOOGLE_ENGINE_ID`
 ## Safety and limits
 
 - Logging: importing the package calls `logging.basicConfig(level=logging.INFO)`, and every search logs the original and rewritten query at INFO level. Queries can contain personal data, so configure logging accordingly.
-- Google API key exposure: the key is sent as a URL query parameter. It appears in `filters_applied` of Google responses. When a Google request fails, the error text includes the request URL; that text is logged, put in the raised `RuntimeError`, and returned as the LangChain tool's output, which goes to the model.
+- API keys: the Google key is sent as the `key` URL query parameter and the Bing key in a request header; neither is included in `filters_applied`. If a request fails, the key is replaced with `***` in the error message and the original exception is not chained, so the key stays out of this package's log lines, the raised `RuntimeError` and the LangChain tool's output, which goes to the model. urllib3, which `requests` uses, logs each request URL at DEBUG level, including the Google `key` parameter, so keep urllib3 DEBUG logging off in production.
 - Rate limits and the cache live in memory per `WebSearchTool` instance. When a limit is reached, `search()` waits up to 10 seconds and then raises `RuntimeError`. Cache hits also use a rate-limit slot.
 - The module-level `search()` helper builds a new tool for each call, so it never reuses cached results.
 - Intent detection matches substrings: "recently" switches a query to news, and "eclipse" (which contains "clip") switches it to video.
 - DuckDuckGo results come from regular expressions over its HTML page and are empty if the markup does not match.
-- Bing: Microsoft retired the Bing Search APIs on August 11, 2025, and new Bing keys can't be created. The Bing backend code remains, but requests to it will fail. Use Google or DuckDuckGo.
+- Bing: Microsoft retired the Bing Search APIs on August 11, 2025, and new Bing keys can't be created. The Bing backend code remains, but requests to it will fail.
+- Google: the Custom Search JSON API is closed to new customers and will be discontinued on January 1, 2027 ([source](https://developers.google.com/custom-search/v1/overview)). After that date, DuckDuckGo scraping is the only backend expected to keep working. A failed request is not retried on another backend, so set `backend='duckduckgo'` before then.
 - The default endpoints use HTTPS.
 
 ## Project layout
